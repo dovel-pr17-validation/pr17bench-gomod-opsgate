@@ -1,0 +1,185 @@
+# Complete server key reference, loaded over config.Default(). Unknown keys fail.
+# READ-ONLY: all providers disabled, no write allowlists, no approval windows.
+# This loads for stdio. Configure public_url, auth.mode and credentials for HTTP.
+# One instance is one trust group: ops:read covers ALL enabled read providers.
+server:
+  name: opsgate
+  audit_log: "" # stderr; otherwise a protected JSONL file path.
+  max_output_bytes: 65536 # Positive; redaction precedes output truncation.
+  tool_timeout: 30s # Cooperative; separate plan/apply deadlines for writes.
+  tools:
+    allow: [] # Empty permits every offered tool; path.Match tool-name globs.
+    deny: [] # Deny wins; excluded tools are absent from tools/list.
+    # Each server policy pattern must match an offered tool or startup fails.
+stdio:
+  user: local # Audit label; launching OS account is the trust boundary.
+  scopes: [ops:read]
+http:
+  listen: 127.0.0.1:8787 # Private backend behind a Host-preserving TLS proxy.
+  public_url: "" # Required origin for HTTP, e.g. https://mcp.example.com; no /mcp.
+auth:
+  mode: "" # Required for HTTP: builtin, external or static.
+  builtin:
+    state_file: "" # Optional private state path, e.g. /var/lib/opsgate/oauth.json.
+    users: [] # Empty denies all. Read-only entry shape below.
+    # - subject: email:operator@example.com
+    #   scopes: [ops:read]
+    #   tools: [] # Empty adds no restriction; optional tool-name globs.
+    # Passkey: passkey:name. GitHub: github:login. OIDC: verified email:address or exact oidc:sub.
+    # Google email needs Gmail/Googlemail or matching Workspace hd; otherwise use oidc:sub.
+    upstream:
+      provider: "" # passkey (no identity provider), github or oidc; Google uses oidc.
+      issuer: "" # Required for OIDC; Google: https://accounts.google.com.
+      client_id: "" # Register exact <public_url>/oauth/callback upstream.
+      client_secret_file: "" # Protected secret file; never put secrets in YAML.
+      client_secret_env: "" # Alternative variable NAME, not its secret value.
+    access_token_ttl: 1h
+    refresh_token_ttl: 720h # Refresh rotation and reuse detection.
+    max_clients: 100
+    allowed_redirect_hosts: [] # Empty accepts any otherwise valid redirect host.
+    # For public deployment set exact hosts, without ports; localhost covers
+    # loopback IPs and any port. Private schemes use entries such as 'cursor:'.
+    # Example: [claude.ai, chatgpt.com, localhost, 'cursor:']; review client URIs.
+    unknown_redirect_hosts: deny # With a host list: deny, or approve (admin review).
+    admins: [] # Exact allowed user subjects who manage /admin/clients.
+    # approve requires admins present in users; pending clients cannot authorize.
+    notify_url: "" # Optional pending-client JSON POST; HTTPS or loopback HTTP.
+    # Notifications are best effort; review client names/redirect hosts as untrusted.
+  external:
+    issuer: "" # Trusted discovery/JWKS issuer; HTTPS except loopback HTTP.
+    audience: "" # Empty defaults to <public_url>/mcp.
+    user_claim: sub
+    users: [] # Empty trusts token scopes; otherwise map claim:<value> identities.
+    # - subject: claim:operator
+    #   scopes: [ops:read] # Intersected with token scopes.
+    #   tools: [] # Optional tool-name globs; empty adds no limit.
+  static: [] # Generate digest with opsgate -gen-token; keep raw token in client storage.
+  # - name: local-client
+  #   sha256: REPLACE_WITH_64_HEX_DIGEST
+  #   scopes: [ops:read]
+  #   tools: [] # Optional tool-name globs; identity is static:local-client.
+approval:
+  ttl: 10m # Pending approval/input lifetime.
+  web: false # Requires builtin auth; stdio supports elicitation only.
+  require_web: false # Requires web; uses browser approval and denies stdio writes.
+  window: 0s # Off; opt-in duration must be 1m..12h.
+  window_tools: [] # Empty permits no grants; tool-name path.Match globs.
+  # Windows cover user+tool across clients and targets; in memory, 100 max.
+  # Never include dev_task_start: approve every coding task separately.
+providers:
+  kubernetes:
+    enabled: false
+    name: default # Single-cluster name; clients may omit cluster with one cluster.
+    protected: false # True requires fresh approval for every write.
+    kubeconfig: "" # In-cluster, then $KUBECONFIG, then ~/.kube/config; no exec/auth-provider.
+    context: "" # Override for file-based config; empty uses selected context.
+    namespaces: [] # Namespace globs; empty denies all namespaced resources.
+    deny_namespaces: [] # Deny wins, e.g. [kube-system, kube-public, kube-node-lease].
+    # Nodes and PersistentVolumes are not restricted by namespace rules; use RBAC.
+    allow_logs: false
+    show_configmap_data: false # Hide data/binaryData values, expose keys.
+    max_log_lines: 500
+    rollout_restart: [] # namespace/name globs; empty disables tool.
+    scale: []
+    delete_pod: []
+    max_replicas: 10 # Nonnegative; zero allows only scaling to zero.
+  note: # Optional experimental notes: runbooks and incident memory in a Markdown folder (Obsidian vault works).
+    enabled: false
+    vault: "" # Absolute existing directory when enabled; access confined with os.Root.
+    exclude: [] # Additional vault-relative path.Match globs; dot paths/conflicts hidden.
+    allow_write: false # Registers four note write tools; still needs approval + ops:write.
+    max_note_bytes: 1048576 # Positive read/write cap; oversized notes skipped by scans.
+  dev: # Optional experimental provider; separate trusted runner/account required.
+    enabled: false
+    runner_socket: "" # Absolute Unix socket path, e.g. /run/opsgate-dev/runner.sock.
+
+# ---- OPTIONAL WRITE OPT-INS (merge into existing sections; not enabled above) ----
+# Review narrow OS/RBAC permissions and human confirmation first. HTTP also needs ops:read.
+# stdio:
+#   scopes: [ops:read, ops:write] # Requires an elicitation-capable client.
+# auth:
+#   builtin:
+#     users:
+#       - subject: oidc:REPLACE_WITH_EXACT_SUBJECT
+#         scopes: [ops:read, ops:write]
+#         tools: [k8s_get, k8s_rollout_restart]
+# approval:
+#   web: true # builtin auth only.
+#   require_web: true # Browser decisions only; stdio writes denied.
+# providers:
+#   kubernetes:
+#     enabled: true
+#     namespaces: [apps]
+#     rollout_restart: [apps/myapp]
+#     scale: [apps/myapp]
+#     delete_pod: [apps/REPLACE_WITH_EXACT_POD]
+#     max_replicas: 3
+#   note:
+#     enabled: true
+#     vault: /absolute/path/to/vault
+#     allow_write: true # Use sync version history; check/rename has an external-edit race.
+# To enable coding tasks: providers.dev.enabled=true, configure runner_socket,
+# and grant selected users [ops:read, dev:run]. Each start requires human approval.
+# Worktrees are not a sandbox; no automatic push/merge/deploy is implemented.
+# An optional approval.window/window_tools grant skips later individual prompts
+# for that user/tool/target. Protected Kubernetes clusters require fresh approval.
+# Keep it off for coding task starts.
+
+# ---- KUBERNETES WATCH ALERTS (read only by `opsgate watch`) ----
+# Configure webhook, email, or both; each batches, cools down and retries independently.
+# Email requires verified TLS: port 465 implicit TLS, every other port STARTTLS.
+# Use a dedicated credential (e.g. app password) that can be revoked separately.
+# Names and redacted summaries pass through the mail provider outside the cluster.
+# No alert storage; failed batches are lost after retries. Check account sending limits:
+# one message per batch interval, up to 288/day at 5m or 96/day at 15m,
+# especially if other services share the account.
+# watch:
+#   webhook_url: https://n8n.example.com/webhook/opsgate-watch  # optional
+#   outputs:                         # optional; independent direct destinations
+#     - name: discord
+#       type: discord
+#       url_file: /etc/opsgate/discord-webhook-url
+#     - name: custom
+#       type: webhook
+#       url: https://alerts.example.com/ingest
+#       header_files:
+#         Authorization: /etc/opsgate/alerts-authorization  # full Bearer value
+#       body_template: |
+#         {"message": {{json .Text}}, "sent_at": {{json .SentAt}}, "alerts": {{json .Alerts}}}
+#   email:                           # optional; enabled by host
+#     host: smtp.example.com
+#     port: 587                      # default; 465 uses implicit TLS
+#     username: alerts@example.com   # optional; pair with password_file
+#     password_file: /etc/opsgate/smtp-password
+#     from: alerts@example.com
+#     to: [me@example.com]
+#     batch: 5m                      # default; 1m–1h
+#     problems_only: false           # warnings only for email when true
+#   approval_url: https://mcp.example.com   # optional; links restart suggestions to approval
+#   secret_file: /etc/opsgate/watch-secret  # optional HMAC key
+#   problems_only: false
+#   batch: 30s
+#   cooldown: 15m
+
+# ---- MULTIPLE KUBERNETES CLUSTERS (replace the kubernetes section above) ----
+# Do not combine clusters with single-cluster connection/policy fields.
+# providers:
+#   kubernetes:
+#     enabled: true
+#     clusters:
+#       - name: kind
+#         kubeconfig: /etc/opsgate/kind.yaml
+#         context: kind-kind
+#         namespaces: [apps]
+#         allow_logs: true
+#         rollout_restart: [apps/web]
+#         scale: [apps/web]
+#         max_replicas: 3
+#       - name: prod
+#         kubeconfig: /etc/opsgate/prod.yaml
+#         protected: true
+#         namespaces: [apps]
+#         deny_namespaces: [kube-system]
+#         allow_logs: true
+#         # No write allowlists: production is read-only.
+# Calls need cluster when several are configured. k8s_clusters lists targets.

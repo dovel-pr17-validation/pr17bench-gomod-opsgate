@@ -1,0 +1,7 @@
+/opsgate
+/dist/
+*.jsonl
+/.gocache/
+/bin/
+/opsgate.yaml
+/coverage.out
